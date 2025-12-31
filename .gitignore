@@ -1,0 +1,19 @@
+## Build results
+bin/
+obj/
+*.dll
+*.exe
+*.pdb
+
+## Visual Studio
+.vs/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+## Backup files
+*.backup
+
+## Test assemblies
+TestAssembly/

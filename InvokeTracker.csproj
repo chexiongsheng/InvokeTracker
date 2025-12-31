@@ -1,0 +1,26 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Mono.Cecil" Version="0.11.5" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Exclude Unity scripts - these should be copied to Unity project -->
+    <Compile Remove="InvokeStatsCollector.cs" />
+    <Compile Remove="InvokeTrackerWindow.cs" />
+	<Compile Remove="InvokeTrackerConfig.cs" />
+    <Compile Remove="InvokeTrackerConfigEditor.cs" />
+    <None Include="InvokeStatsCollector.cs" />
+    <None Include="InvokeTrackerWindow.cs" />
+	<None Include="InvokeTrackerConfig.cs" />
+    <None Include="InvokeTrackerConfigEditor.cs" />
+  </ItemGroup>
+
+</Project>
