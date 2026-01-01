@@ -35,18 +35,7 @@ namespace InvokeTracker
             // Create backup if requested
             if (_config.CreateBackup)
             {
-                var backupPath = _config.AssemblyPath + ".backup";
-                File.Copy(_config.AssemblyPath, backupPath, true);
-                Console.WriteLine($"Backup created: {backupPath}");
-
-                // Also backup PDB file if it exists
-                var pdbPath = Path.ChangeExtension(_config.AssemblyPath, ".pdb");
-                if (File.Exists(pdbPath))
-                {
-                    var pdbBackupPath = pdbPath + ".backup";
-                    File.Copy(pdbPath, pdbBackupPath, true);
-                    Console.WriteLine($"PDB backup created: {pdbBackupPath}");
-                }
+                CreateBackup(_config.AssemblyPath, _config.BackupDirectory);
             }
 
             // Load assembly with read/write mode
@@ -378,6 +367,56 @@ namespace InvokeTracker
             return method.Name.Contains("<") || 
                    method.Name.Contains(">") ||
                    method.CustomAttributes.Any(a => a.AttributeType.Name == "CompilerGeneratedAttribute");
+        }
+
+        /// <summary>
+        /// Create backup of assembly file with path record
+        /// </summary>
+        private void CreateBackup(string assemblyPath, string? backupDirectory)
+        {
+            // Determine backup directory
+            string backupDir;
+            if (!string.IsNullOrEmpty(backupDirectory))
+            {
+                backupDir = backupDirectory;
+                // Create backup directory if it doesn't exist
+                if (!Directory.Exists(backupDir))
+                {
+                    Directory.CreateDirectory(backupDir);
+                    Console.WriteLine($"Created backup directory: {backupDir}");
+                }
+            }
+            else
+            {
+                // Use same directory as assembly
+                backupDir = Path.GetDirectoryName(assemblyPath) ?? "";
+            }
+
+            // Backup DLL file
+            var fileName = Path.GetFileName(assemblyPath);
+            var backupPath = Path.Combine(backupDir, fileName + ".backup");
+            File.Copy(assemblyPath, backupPath, true);
+            Console.WriteLine($"Backup created: {backupPath}");
+
+            // Create path record file
+            var pathRecordFile = backupPath + ".txt";
+            File.WriteAllText(pathRecordFile, assemblyPath);
+            Console.WriteLine($"Path record created: {pathRecordFile}");
+
+            // Also backup PDB file if it exists
+            var pdbPath = Path.ChangeExtension(assemblyPath, ".pdb");
+            if (File.Exists(pdbPath))
+            {
+                var pdbFileName = Path.GetFileName(pdbPath);
+                var pdbBackupPath = Path.Combine(backupDir, pdbFileName + ".backup");
+                File.Copy(pdbPath, pdbBackupPath, true);
+                Console.WriteLine($"PDB backup created: {pdbBackupPath}");
+
+                // Create path record for PDB
+                var pdbPathRecordFile = pdbBackupPath + ".txt";
+                File.WriteAllText(pdbPathRecordFile, pdbPath);
+                Console.WriteLine($"PDB path record created: {pdbPathRecordFile}");
+            }
         }
     }
 }

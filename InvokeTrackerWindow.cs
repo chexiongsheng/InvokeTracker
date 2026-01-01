@@ -253,6 +253,10 @@ namespace InvokeTracker.Unity.Editor
                     args += $" --search-dir=\"{dir}\"";
                 }
 
+                // Add backup directory (Assets同级目录/InvokeTrackerBackupFiles)
+                var backupDir = GetBackupDirectory();
+                args += $" --backup-dir=\"{backupDir}\"";
+
                 // Run the weaver tool
                 try
                 {
@@ -428,66 +432,99 @@ namespace InvokeTracker.Unity.Editor
             return searchDirs.ToList();
         }
 
+        /// <summary>
+        /// Get backup directory (Assets同级目录/InvokeTrackerBackupFiles)
+        /// </summary>
+        private string GetBackupDirectory()
+        {
+            var assetsPath = Application.dataPath;
+            var projectRoot = Path.GetDirectoryName(assetsPath);
+            var backupDir = Path.Combine(projectRoot, "InvokeTrackerBackupFiles");
+            return backupDir;
+        }
+
         private void RestoreWithConfig(InvokeTrackerConfig cfg)
         {
-            var enabledAssemblies = cfg.GetEnabledAssemblyPaths();
-            if (enabledAssemblies.Count == 0)
+            var backupDir = GetBackupDirectory();
+            
+            if (!Directory.Exists(backupDir))
             {
-                UnityEngine.Debug.LogError("Error: No enabled assemblies!");
-                EditorUtility.DisplayDialog("Error", "Please enable at least one assembly to restore.", "OK");
+                UnityEngine.Debug.LogError($"Error: Backup directory not found: {backupDir}");
+                EditorUtility.DisplayDialog("Error", "Backup directory not found!", "OK");
                 return;
             }
 
-            UnityEngine.Debug.Log($"=== Restoring {enabledAssemblies.Count} assemblies from backup ===");
+            // Find all .backup files in backup directory
+            var backupFiles = Directory.GetFiles(backupDir, "*.backup", SearchOption.TopDirectoryOnly);
+            
+            if (backupFiles.Length == 0)
+            {
+                UnityEngine.Debug.LogError("Error: No backup files found!");
+                EditorUtility.DisplayDialog("Error", "No backup files found in backup directory!", "OK");
+                return;
+            }
+
+            UnityEngine.Debug.Log($"=== Restoring {backupFiles.Length} files from backup ===");
 
             int successCount = 0;
             int failCount = 0;
 
-            foreach (var assemblyPath in enabledAssemblies)
+            foreach (var backupPath in backupFiles)
             {
-                var fullAssemblyPath = Path.Combine(Application.dataPath, "..", assemblyPath);
-                var backupPath = fullAssemblyPath + ".backup";
-
-                if (!File.Exists(backupPath))
+                var backupFileName = Path.GetFileName(backupPath);
+                
+                // Read original path from .txt file
+                var pathRecordFile = backupPath + ".txt";
+                if (!File.Exists(pathRecordFile))
                 {
-                    UnityEngine.Debug.LogWarning($"[SKIP] {assemblyPath} - Backup not found");
+                    UnityEngine.Debug.LogWarning($"[SKIP] {backupFileName} - Path record file not found");
+                    failCount++;
+                    continue;
+                }
+
+                string originalPath;
+                try
+                {
+                    originalPath = File.ReadAllText(pathRecordFile).Trim();
+                }
+                catch (System.Exception ex)
+                {
+                    UnityEngine.Debug.LogError($"[FAILED] {backupFileName} - Cannot read path record: {ex.Message}");
+                    failCount++;
+                    continue;
+                }
+
+                if (string.IsNullOrEmpty(originalPath))
+                {
+                    UnityEngine.Debug.LogWarning($"[SKIP] {backupFileName} - Empty path in record file");
                     failCount++;
                     continue;
                 }
 
                 try
                 {
-                    File.Copy(backupPath, fullAssemblyPath, true);
-                    UnityEngine.Debug.Log($"[SUCCESS] {assemblyPath} - Restored from backup");
+                    File.Copy(backupPath, originalPath, true);
+                    UnityEngine.Debug.Log($"[SUCCESS] {backupFileName} -> {originalPath}");
                     successCount++;
-
-                    // Also restore PDB file if backup exists
-                    var pdbPath = Path.ChangeExtension(fullAssemblyPath, ".pdb");
-                    var pdbBackupPath = pdbPath + ".backup";
-                    if (File.Exists(pdbBackupPath))
-                    {
-                        File.Copy(pdbBackupPath, pdbPath, true);
-                        UnityEngine.Debug.Log($"  └─ PDB restored for {assemblyPath}");
-                    }
                 }
                 catch (System.Exception ex)
                 {
-                    UnityEngine.Debug.LogError($"[FAILED] {assemblyPath}: {ex.Message}");
+                    UnityEngine.Debug.LogError($"[FAILED] {backupFileName}: {ex.Message}");
                     failCount++;
                 }
             }
 
             var summary = $"\n=== Summary ===\n" +
-                $"Total: {enabledAssemblies.Count}\n" +
+                $"Total: {backupFiles.Length}\n" +
                 $"Success: {successCount}\n" +
                 $"Failed: {failCount}";
             UnityEngine.Debug.Log(summary);
 
             if (failCount == 0)
             {
-                UnityEngine.Debug.Log($"All {successCount} assemblies restored successfully!");
+                UnityEngine.Debug.Log($"All {successCount} files restored successfully!");
                 EditorUtility.DisplayDialog("Success", 
-                    $"Successfully restored {successCount} assemblies from backup!", "OK");
+                    $"Successfully restored {successCount} files from backup!", "OK");
             }
             else
             {

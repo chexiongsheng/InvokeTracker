@@ -79,6 +79,10 @@
                         config.SearchDirectories.Add(dir);
                     }
                 }
+                else if (arg.StartsWith("--backup-dir="))
+                {
+                    config.BackupDirectory = arg.Substring("--backup-dir=".Length);
+                }
             }
 
             // Debug: Print parsed config
@@ -106,6 +110,7 @@
             Console.WriteLine("  --no-backup                    Don't create backup file");
             Console.WriteLine("  --instrument-compiler-generated Include compiler-generated methods");
             Console.WriteLine("  --search-dir=<directory>       Add assembly search directory (can be used multiple times)");
+            Console.WriteLine("  --backup-dir=<directory>       Directory to store backup files");
             Console.WriteLine();
             Console.WriteLine("Example:");
             Console.WriteLine("  InvokeTracker Assembly-CSharp.dll --include=MyGame --prefix=_count_");

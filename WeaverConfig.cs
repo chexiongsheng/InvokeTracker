@@ -51,5 +51,10 @@ namespace InvokeTracker
         /// Additional directories to search for assembly dependencies
         /// </summary>
         public List<string> SearchDirectories { get; set; } = new();
+
+        /// <summary>
+        /// Directory to store backup files (empty means same directory as assembly)
+        /// </summary>
+        public string? BackupDirectory { get; set; }
     }
 }
