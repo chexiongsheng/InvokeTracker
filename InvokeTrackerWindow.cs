@@ -14,7 +14,6 @@ namespace InvokeTracker.Unity.Editor
     {
         private InvokeTrackerConfig config;
         private Vector2 scrollPosition;
-        private string lastOutput = "";
 
         [MenuItem("Tools/Invoke Tracker")]
         public static void ShowWindow()
@@ -95,11 +94,6 @@ namespace InvokeTracker.Unity.Editor
                     CreateNewConfig();
                 }
 
-                EditorGUILayout.Space();
-                EditorGUILayout.LabelField("Output", EditorStyles.boldLabel);
-                
-                // Use TextArea with scroll bar (built-in)
-                EditorGUILayout.TextArea(lastOutput, GUILayout.MaxHeight(150));
                 return;
             }
 
@@ -164,15 +158,6 @@ namespace InvokeTracker.Unity.Editor
                 AssetDatabase.Refresh();
                 UnityEditor.Compilation.CompilationPipeline.RequestScriptCompilation();
             }
-
-            EditorGUILayout.Space();
-
-            // Output section
-            EditorGUILayout.LabelField("Output", EditorStyles.boldLabel);
-            
-            // Use TextArea with scroll bar (built-in)
-            // GUILayout.MaxHeight will automatically add scroll bar when content exceeds height
-            EditorGUILayout.TextArea(lastOutput, GUILayout.MaxHeight(150));
         }
 
         private void CreateNewConfig()
@@ -200,22 +185,19 @@ namespace InvokeTracker.Unity.Editor
 
             if (!File.Exists(fullWeaverPath))
             {
-                lastOutput = $"Error: Weaver tool not found at {fullWeaverPath}";
-                UnityEngine.Debug.LogError(lastOutput);
+                UnityEngine.Debug.LogError($"Error: Weaver tool not found at {fullWeaverPath}");
                 return;
             }
 
             var enabledAssemblies = cfg.GetEnabledAssemblyPaths();
             if (enabledAssemblies.Count == 0)
             {
-                lastOutput = "Error: No enabled assemblies!";
-                UnityEngine.Debug.LogError(lastOutput);
+                UnityEngine.Debug.LogError("Error: No enabled assemblies!");
                 EditorUtility.DisplayDialog("Error", "Please enable at least one assembly to instrument.", "OK");
                 return;
             }
 
-            var results = new System.Text.StringBuilder();
-            results.AppendLine($"=== Instrumenting {enabledAssemblies.Count} assemblies ===");
+            UnityEngine.Debug.Log($"=== Instrumenting {enabledAssemblies.Count} assemblies ===");
 
             int successCount = 0;
             int failCount = 0;
@@ -226,14 +208,12 @@ namespace InvokeTracker.Unity.Editor
 
                 if (!File.Exists(fullAssemblyPath))
                 {
-                    var error = $"[SKIP] {assemblyPath} - File not found";
-                    results.AppendLine(error);
-                    UnityEngine.Debug.LogWarning(error);
+                    UnityEngine.Debug.LogWarning($"[SKIP] {assemblyPath} - File not found");
                     failCount++;
                     continue;
                 }
 
-                results.AppendLine($"\n--- Processing: {assemblyPath} ---");
+                UnityEngine.Debug.Log($"--- Processing: {assemblyPath} ---");
 
                 // Use .instrumented as temporary output file to avoid locking issues
                 var instrumentedPath = fullAssemblyPath + ".instrumented";
@@ -266,6 +246,13 @@ namespace InvokeTracker.Unity.Editor
                     args += " --instrument-compiler-generated";
                 }
 
+                // Add search directories for assembly dependencies
+                var searchDirs = GetAssemblySearchDirectories(fullAssemblyPath);
+                foreach (var dir in searchDirs)
+                {
+                    args += $" --search-dir=\"{dir}\"";
+                }
+
                 // Run the weaver tool
                 try
                 {
@@ -290,18 +277,20 @@ namespace InvokeTracker.Unity.Editor
                     
                     process.WaitForExit();
 
-                    results.AppendLine(output);
+                    if (!string.IsNullOrEmpty(output))
+                    {
+                        UnityEngine.Debug.Log(output);
+                    }
                     
                     if (!string.IsNullOrEmpty(error))
                     {
-                        results.AppendLine("Errors:");
-                        results.AppendLine(error);
+                        UnityEngine.Debug.LogError("Errors:\n" + error);
                     }
 
                     // Check if assembly was already instrumented
                     if (process.ExitCode == 0 && output.Contains("already instrumented"))
                     {
-                        results.AppendLine($"[SKIPPED] {assemblyPath} - Already instrumented");
+                        UnityEngine.Debug.Log($"[SKIPPED] {assemblyPath} - Already instrumented");
                         successCount++; // Count as success (not an error)
                         continue; // Skip the copy logic
                     }
@@ -319,61 +308,59 @@ namespace InvokeTracker.Unity.Editor
                                 // Success! Clean up the instrumented file
                                 File.Delete(instrumentedPath);
                                 
-                                results.AppendLine($"[SUCCESS] {assemblyPath}");
+                                UnityEngine.Debug.Log($"[SUCCESS] {assemblyPath}");
                                 successCount++;
                             }
                             catch (IOException ex) when (ex.Message.Contains("being used by another process"))
                             {
                                 // File is locked by Unity Editor
-                                results.AppendLine($"\n⚠️ WARNING: Cannot copy to {assemblyPath}");
-                                results.AppendLine($"The file is currently locked by Unity Editor.");
-                                results.AppendLine($"\n📁 Instrumented file saved at:");
-                                results.AppendLine($"   {instrumentedPath}");
-                                results.AppendLine($"\n💡 Manual Steps:");
-                                results.AppendLine($"   1. Close Unity Editor");
-                                results.AppendLine($"   2. Copy the .instrumented file to original location:");
-                                results.AppendLine($"      From: {instrumentedPath}");
-                                results.AppendLine($"      To:   {fullAssemblyPath}");
-                                results.AppendLine($"   3. Delete the .instrumented file");
-                                results.AppendLine($"   4. Reopen Unity Editor");
-                                results.AppendLine($"\n[PARTIAL] {assemblyPath} - Instrumented but not copied (file locked)");
+                                var warningMsg = $"⚠️ WARNING: Cannot copy to {assemblyPath}\n" +
+                                    $"The file is currently locked by Unity Editor.\n" +
+                                    $"\n📁 Instrumented file saved at:\n" +
+                                    $"   {instrumentedPath}\n" +
+                                    $"\n💡 Manual Steps:\n" +
+                                    $"   1. Close Unity Editor\n" +
+                                    $"   2. Copy the .instrumented file to original location:\n" +
+                                    $"      From: {instrumentedPath}\n" +
+                                    $"      To:   {fullAssemblyPath}\n" +
+                                    $"   3. Delete the .instrumented file\n" +
+                                    $"   4. Reopen Unity Editor\n" +
+                                    $"\n[PARTIAL] {assemblyPath} - Instrumented but not copied (file locked)";
+                                UnityEngine.Debug.LogWarning(warningMsg);
                                 
                                 // Count as partial success
                                 successCount++;
                             }
                             catch (System.Exception ex)
                             {
-                                results.AppendLine($"[FAILED] {assemblyPath} - Copy error: {ex.Message}");
+                                UnityEngine.Debug.LogError($"[FAILED] {assemblyPath} - Copy error: {ex.Message}");
                                 failCount++;
                             }
                         }
                         else
                         {
-                            results.AppendLine($"[FAILED] {assemblyPath} - Instrumented file not found");
+                            UnityEngine.Debug.LogError($"[FAILED] {assemblyPath} - Instrumented file not found");
                             failCount++;
                         }
                     }
                     else
                     {
-                        results.AppendLine($"[FAILED] {assemblyPath} - Exit code: {process.ExitCode}");
+                        UnityEngine.Debug.LogError($"[FAILED] {assemblyPath} - Exit code: {process.ExitCode}");
                         failCount++;
                     }
                 }
                 catch (System.Exception ex)
                 {
-                    var error = $"[EXCEPTION] {assemblyPath}: {ex.Message}";
-                    results.AppendLine(error);
-                    UnityEngine.Debug.LogError(error);
+                    UnityEngine.Debug.LogError($"[EXCEPTION] {assemblyPath}: {ex.Message}");
                     failCount++;
                 }
             }
 
-            results.AppendLine($"\n=== Summary ===");
-            results.AppendLine($"Total: {enabledAssemblies.Count}");
-            results.AppendLine($"Success: {successCount}");
-            results.AppendLine($"Failed: {failCount}");
-
-            lastOutput = results.ToString();
+            var summary = $"\n=== Summary ===\n" +
+                $"Total: {enabledAssemblies.Count}\n" +
+                $"Success: {successCount}\n" +
+                $"Failed: {failCount}";
+            UnityEngine.Debug.Log(summary);
 
             if (failCount == 0)
             {
@@ -383,10 +370,62 @@ namespace InvokeTracker.Unity.Editor
             }
             else
             {
-                UnityEngine.Debug.LogWarning($"Instrumentation completed with {failCount} failures. Check output for details.");
+                UnityEngine.Debug.LogWarning($"Instrumentation completed with {failCount} failures. Check Console for details.");
                 EditorUtility.DisplayDialog("Partial Success", 
-                    $"Success: {successCount}\nFailed: {failCount}\n\nCheck output for details.", "OK");
+                    $"Success: {successCount}\nFailed: {failCount}\n\nCheck Console for details.", "OK");
             }
+        }
+
+        /// <summary>
+        /// Get search directories for assembly dependencies
+        /// </summary>
+        private List<string> GetAssemblySearchDirectories(string assemblyPath)
+        {
+            var searchDirs = new HashSet<string>();
+
+            // Add the assembly's own directory
+            var assemblyDir = Path.GetDirectoryName(assemblyPath);
+            if (!string.IsNullOrEmpty(assemblyDir))
+            {
+                searchDirs.Add(Path.GetFullPath(assemblyDir));
+            }
+
+            // Get directories from all currently loaded assemblies
+            // This ensures we find UnityEngine.CoreModule and other dependencies
+            try
+            {
+                var loadedAssemblies = System.AppDomain.CurrentDomain.GetAssemblies();
+                foreach (var assembly in loadedAssemblies)
+                {
+                    try
+                    {
+                        // Skip dynamic assemblies (they don't have a location)
+                        if (assembly.IsDynamic)
+                            continue;
+
+                        var location = assembly.Location;
+                        if (!string.IsNullOrEmpty(location))
+                        {
+                            var dir = Path.GetDirectoryName(location);
+                            if (!string.IsNullOrEmpty(dir) && Directory.Exists(dir))
+                            {
+                                searchDirs.Add(Path.GetFullPath(dir));
+                            }
+                        }
+                    }
+                    catch
+                    {
+                        // Skip assemblies that throw exceptions when accessing Location
+                        continue;
+                    }
+                }
+            }
+            catch (System.Exception ex)
+            {
+                UnityEngine.Debug.LogWarning($"Failed to get loaded assemblies: {ex.Message}");
+            }
+
+            return searchDirs.ToList();
         }
 
         private void RestoreWithConfig(InvokeTrackerConfig cfg)
@@ -394,14 +433,12 @@ namespace InvokeTracker.Unity.Editor
             var enabledAssemblies = cfg.GetEnabledAssemblyPaths();
             if (enabledAssemblies.Count == 0)
             {
-                lastOutput = "Error: No enabled assemblies!";
-                UnityEngine.Debug.LogError(lastOutput);
+                UnityEngine.Debug.LogError("Error: No enabled assemblies!");
                 EditorUtility.DisplayDialog("Error", "Please enable at least one assembly to restore.", "OK");
                 return;
             }
 
-            var results = new System.Text.StringBuilder();
-            results.AppendLine($"=== Restoring {enabledAssemblies.Count} assemblies from backup ===");
+            UnityEngine.Debug.Log($"=== Restoring {enabledAssemblies.Count} assemblies from backup ===");
 
             int successCount = 0;
             int failCount = 0;
@@ -413,9 +450,7 @@ namespace InvokeTracker.Unity.Editor
 
                 if (!File.Exists(backupPath))
                 {
-                    var error = $"[SKIP] {assemblyPath} - Backup not found";
-                    results.AppendLine(error);
-                    UnityEngine.Debug.LogWarning(error);
+                    UnityEngine.Debug.LogWarning($"[SKIP] {assemblyPath} - Backup not found");
                     failCount++;
                     continue;
                 }
@@ -423,8 +458,7 @@ namespace InvokeTracker.Unity.Editor
                 try
                 {
                     File.Copy(backupPath, fullAssemblyPath, true);
-                    var success = $"[SUCCESS] {assemblyPath} - Restored from backup";
-                    results.AppendLine(success);
+                    UnityEngine.Debug.Log($"[SUCCESS] {assemblyPath} - Restored from backup");
                     successCount++;
 
                     // Also restore PDB file if backup exists
@@ -433,24 +467,21 @@ namespace InvokeTracker.Unity.Editor
                     if (File.Exists(pdbBackupPath))
                     {
                         File.Copy(pdbBackupPath, pdbPath, true);
-                        results.AppendLine($"  └─ PDB restored");
+                        UnityEngine.Debug.Log($"  └─ PDB restored for {assemblyPath}");
                     }
                 }
                 catch (System.Exception ex)
                 {
-                    var error = $"[FAILED] {assemblyPath}: {ex.Message}";
-                    results.AppendLine(error);
-                    UnityEngine.Debug.LogError(error);
+                    UnityEngine.Debug.LogError($"[FAILED] {assemblyPath}: {ex.Message}");
                     failCount++;
                 }
             }
 
-            results.AppendLine($"\n=== Summary ===");
-            results.AppendLine($"Total: {enabledAssemblies.Count}");
-            results.AppendLine($"Success: {successCount}");
-            results.AppendLine($"Failed: {failCount}");
-
-            lastOutput = results.ToString();
+            var summary = $"\n=== Summary ===\n" +
+                $"Total: {enabledAssemblies.Count}\n" +
+                $"Success: {successCount}\n" +
+                $"Failed: {failCount}";
+            UnityEngine.Debug.Log(summary);
 
             if (failCount == 0)
             {
@@ -460,9 +491,9 @@ namespace InvokeTracker.Unity.Editor
             }
             else
             {
-                UnityEngine.Debug.LogWarning($"Restore completed with {failCount} failures. Check output for details.");
+                UnityEngine.Debug.LogWarning($"Restore completed with {failCount} failures. Check Console for details.");
                 EditorUtility.DisplayDialog("Partial Success", 
-                    $"Success: {successCount}\nFailed: {failCount}\n\nCheck output for details.", "OK");
+                    $"Success: {successCount}\nFailed: {failCount}\n\nCheck Console for details.", "OK");
             }
         }
     }

@@ -6,6 +6,14 @@
         {
             Console.WriteLine("=== Unity Invoke Tracker - IL Weaver ===\n");
 
+            // Debug: Print all arguments
+            Console.WriteLine($"Received {args.Length} arguments:");
+            for (int i = 0; i < args.Length; i++)
+            {
+                Console.WriteLine($"  args[{i}] = {args[i]}");
+            }
+            Console.WriteLine();
+
             if (args.Length == 0)
             {
                 ShowUsage();
@@ -63,7 +71,25 @@
                 {
                     config.InstrumentCompilerGenerated = true;
                 }
+                else if (arg.StartsWith("--search-dir="))
+                {
+                    var dir = arg.Substring("--search-dir=".Length);
+                    if (!string.IsNullOrEmpty(dir))
+                    {
+                        config.SearchDirectories.Add(dir);
+                    }
+                }
             }
+
+            // Debug: Print parsed config
+            Console.WriteLine($"Parsed config:");
+            Console.WriteLine($"  AssemblyPath: {config.AssemblyPath}");
+            Console.WriteLine($"  SearchDirectories.Count: {config.SearchDirectories.Count}");
+            foreach (var dir in config.SearchDirectories)
+            {
+                Console.WriteLine($"    - {dir}");
+            }
+            Console.WriteLine();
 
             return config;
         }
@@ -79,6 +105,7 @@
             Console.WriteLine("  --output=<path>                Output path (default: overwrite original)");
             Console.WriteLine("  --no-backup                    Don't create backup file");
             Console.WriteLine("  --instrument-compiler-generated Include compiler-generated methods");
+            Console.WriteLine("  --search-dir=<directory>       Add assembly search directory (can be used multiple times)");
             Console.WriteLine();
             Console.WriteLine("Example:");
             Console.WriteLine("  InvokeTracker Assembly-CSharp.dll --include=MyGame --prefix=_count_");

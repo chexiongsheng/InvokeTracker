@@ -46,5 +46,10 @@ namespace InvokeTracker
         /// Output path for the instrumented assembly (empty means overwrite original)
         /// </summary>
         public string? OutputPath { get; set; }
+
+        /// <summary>
+        /// Additional directories to search for assembly dependencies
+        /// </summary>
+        public List<string> SearchDirectories { get; set; } = new();
     }
 }

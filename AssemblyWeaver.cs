@@ -50,10 +50,35 @@ namespace InvokeTracker
             }
 
             // Load assembly with read/write mode
+            var resolver = new DefaultAssemblyResolver();
+            
+            // Add search directories for assembly resolution
+            var assemblyDir = Path.GetDirectoryName(_config.AssemblyPath);
+            if (!string.IsNullOrEmpty(assemblyDir))
+            {
+                resolver.AddSearchDirectory(assemblyDir);
+            }
+            
+            Console.WriteLine($"search directory count: {_config.SearchDirectories.Count}");
+            // Add additional search directories from config
+            foreach (var searchDir in _config.SearchDirectories)
+            {
+                if (!string.IsNullOrEmpty(searchDir) && Directory.Exists(searchDir))
+                {
+                    resolver.AddSearchDirectory(searchDir);
+                    Console.WriteLine($"Added search directory: {searchDir}");
+                }
+                else
+                {
+                    Console.WriteLine($"Invalid search directory: {searchDir}");
+                }
+            }
+            
             var readerParameters = new ReaderParameters
             {
                 ReadSymbols = true,
-                ReadWrite = string.IsNullOrEmpty(_config.OutputPath)
+                ReadWrite = string.IsNullOrEmpty(_config.OutputPath),
+                AssemblyResolver = resolver
             };
 
             using var assembly = AssemblyDefinition.ReadAssembly(_config.AssemblyPath, readerParameters);
@@ -243,7 +268,6 @@ namespace InvokeTracker
                 InjectCounterIncrement(method, counterField);
 
                 _instrumentedMethodCount++;
-                Console.WriteLine($"  ✓ {type.Name}.{method.Name} -> {targetType.Name}.{fieldName}");
             }
             catch (Exception ex)
             {
