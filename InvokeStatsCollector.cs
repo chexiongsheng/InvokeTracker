@@ -26,15 +26,16 @@ namespace InvokeTracker.Unity
 
         [Header("Output")]
         [Tooltip("Log results to console")]
-        public bool logToConsole = true;
+        public bool logToConsole = false;
 
         [Tooltip("Export to JSON file")]
-        public bool exportToJson = false;
+        public bool exportToJson = true;
 
         [Tooltip("JSON export path (relative to Application.persistentDataPath)")]
         public string jsonExportPath = "invoke_stats.json";
 
         private Dictionary<string, uint> _stats = new Dictionary<string, uint>();
+        private Dictionary<string, string> _methodToAssembly = new Dictionary<string, string>();
 
         /// <summary>
         /// Collect invoke statistics from all instrumented assemblies
@@ -42,6 +43,7 @@ namespace InvokeTracker.Unity
         public void CollectStats()
         {
             _stats.Clear();
+            _methodToAssembly.Clear();
 
             var assemblies = GetTargetAssemblies();
 
@@ -104,6 +106,7 @@ namespace InvokeTracker.Unity
             try
             {
                 var types = assembly.GetTypes();
+                var assemblyName = assembly.GetName().Name;
 
                 foreach (var type in types)
                 {
@@ -122,7 +125,7 @@ namespace InvokeTracker.Unity
                         if (!included) continue;
                     }
 
-                    ScanType(type);
+                    ScanType(type, assemblyName);
                 }
             }
             catch (Exception ex)
@@ -131,7 +134,7 @@ namespace InvokeTracker.Unity
             }
         }
 
-        private void ScanType(Type type)
+        private void ScanType(Type type, string assemblyName)
         {
             var fields = type.GetFields(BindingFlags.Public | BindingFlags.Static);
 
@@ -195,6 +198,7 @@ namespace InvokeTracker.Unity
                         var fullName = $"{typeName}.{methodName}";
                         
                         _stats[fullName] = value;
+                        _methodToAssembly[fullName] = assemblyName;
                     }
                 }
             }
@@ -247,16 +251,30 @@ namespace InvokeTracker.Unity
         {
             try
             {
+                // Group methods by assembly
+                var assemblies = _stats
+                    .GroupBy(kv => _methodToAssembly.ContainsKey(kv.Key) ? _methodToAssembly[kv.Key] : "Unknown")
+                    .Select(g => new AssemblyInvokeData
+                    {
+                        assemblyName = g.Key,
+                        totalMethods = g.Count(),
+                        totalInvocations = g.Sum(kv => (long)kv.Value),
+                        methods = g.Select(kv => new MethodInvokeData
+                        {
+                            fullName = kv.Key,
+                            invocations = kv.Value
+                        }).OrderByDescending(m => m.invocations).ToList()
+                    })
+                    .OrderByDescending(a => a.totalInvocations)
+                    .ToList();
+
                 var data = new InvokeStatsData
                 {
                     timestamp = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"),
+                    totalAssemblies = assemblies.Count,
                     totalMethods = _stats.Count,
                     totalInvocations = _stats.Values.Sum(v => (long)v),
-                    methods = _stats.Select(kv => new MethodInvokeData
-                    {
-                        fullName = kv.Key,
-                        invocations = kv.Value
-                    }).OrderByDescending(m => m.invocations).ToList()
+                    assemblies = assemblies
                 };
 
                 var json = JsonUtility.ToJson(data, true);
@@ -275,6 +293,16 @@ namespace InvokeTracker.Unity
         private class InvokeStatsData
         {
             public string timestamp;
+            public int totalAssemblies;
+            public int totalMethods;
+            public long totalInvocations;
+            public List<AssemblyInvokeData> assemblies;
+        }
+
+        [Serializable]
+        private class AssemblyInvokeData
+        {
+            public string assemblyName;
             public int totalMethods;
             public long totalInvocations;
             public List<MethodInvokeData> methods;
