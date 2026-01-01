@@ -70,6 +70,13 @@ namespace InvokeTracker
                 AssemblyResolver = resolver
             };
 
+            // Detect original PDB file name before loading
+            string? originalPdbPath = DetectOriginalPdbPath(_config.AssemblyPath);
+            if (originalPdbPath != null)
+            {
+                Console.WriteLine($"Detected original PDB: {originalPdbPath}");
+            }
+
             using var assembly = AssemblyDefinition.ReadAssembly(_config.AssemblyPath, readerParameters);
 
             Console.WriteLine($"Processing assembly: {assembly.Name.Name}");
@@ -128,12 +135,24 @@ namespace InvokeTracker
             {
                 assembly.Write(_config.OutputPath, writerParameters);
                 Console.WriteLine($"  - Output file: {_config.OutputPath}");
+                
+                // If we detected a non-standard PDB name, rename the generated PDB
+                if (originalPdbPath != null && writerParameters.WriteSymbols)
+                {
+                    RenameGeneratedPdb(_config.OutputPath, originalPdbPath);
+                }
             }
             else
             {
                 // No OutputPath specified, write directly to original assembly (old behavior)
                 assembly.Write(_config.AssemblyPath, writerParameters);
                 Console.WriteLine($"  - Modified assembly: {_config.AssemblyPath}");
+                
+                // If we detected a non-standard PDB name, rename the generated PDB
+                if (originalPdbPath != null && writerParameters.WriteSymbols)
+                {
+                    RenameGeneratedPdb(_config.AssemblyPath, originalPdbPath);
+                }
             }
         }
 
@@ -416,6 +435,59 @@ namespace InvokeTracker
                 var pdbPathRecordFile = pdbBackupPath + ".txt";
                 File.WriteAllText(pdbPathRecordFile, pdbPath);
                 Console.WriteLine($"PDB path record created: {pdbPathRecordFile}");
+            }
+        }
+
+        /// <summary>
+        /// Detect the original PDB file path for the assembly
+        /// Checks both standard (xxx.pdb) and non-standard (xxx.dll.pdb) naming conventions
+        /// </summary>
+        private string? DetectOriginalPdbPath(string assemblyPath)
+        {
+            // Check standard naming: xxx.dll -> xxx.pdb
+            var standardPdbPath = Path.ChangeExtension(assemblyPath, ".pdb");
+            if (File.Exists(standardPdbPath))
+            {
+                return standardPdbPath;
+            }
+
+            // Check non-standard naming: xxx.dll -> xxx.dll.pdb
+            var nonStandardPdbPath = assemblyPath + ".pdb";
+            if (File.Exists(nonStandardPdbPath))
+            {
+                return nonStandardPdbPath;
+            }
+
+            return null;
+        }
+
+        /// <summary>
+        /// Rename the generated PDB file to match the original naming convention
+        /// Cecil always generates xxx.dll.pdb, but we may need xxx.pdb
+        /// </summary>
+        private void RenameGeneratedPdb(string assemblyPath, string originalPdbPath)
+        {
+            // Cecil generates: xxx.dll.pdb
+            var cecilGeneratedPdb = assemblyPath + ".pdb";
+            
+            // Get the original PDB file name
+            var originalPdbFileName = Path.GetFileName(originalPdbPath);
+            var standardPdbFileName = Path.GetFileName(Path.ChangeExtension(assemblyPath, ".pdb"));
+
+            // If original uses standard naming (xxx.pdb) but Cecil generated xxx.dll.pdb
+            if (originalPdbFileName == standardPdbFileName && File.Exists(cecilGeneratedPdb))
+            {
+                var targetPdbPath = Path.ChangeExtension(assemblyPath, ".pdb");
+                
+                // Delete old PDB if exists
+                if (File.Exists(targetPdbPath))
+                {
+                    File.Delete(targetPdbPath);
+                }
+                
+                // Rename Cecil's generated PDB to match original naming
+                File.Move(cecilGeneratedPdb, targetPdbPath);
+                Console.WriteLine($"  - Renamed PDB: {Path.GetFileName(cecilGeneratedPdb)} -> {Path.GetFileName(targetPdbPath)}");
             }
         }
     }

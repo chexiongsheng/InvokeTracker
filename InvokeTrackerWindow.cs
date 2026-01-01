@@ -309,6 +309,33 @@ namespace InvokeTracker.Unity.Editor
                                 // Try to copy the instrumented file to original location
                                 File.Copy(instrumentedPath, fullAssemblyPath, true);
                                 
+                                // Also copy PDB file if it exists
+                                // Check both standard naming (xxx.pdb) and non-standard naming (xxx.dll.pdb)
+                                var standardPdbPath = Path.ChangeExtension(instrumentedPath, ".pdb");
+                                var nonStandardPdbPath = instrumentedPath + ".pdb";
+                                var targetPdbPath = Path.ChangeExtension(fullAssemblyPath, ".pdb");
+                                var targetNonStandardPdbPath = fullAssemblyPath + ".pdb";
+                                
+                                if (File.Exists(standardPdbPath))
+                                {
+                                    File.Copy(standardPdbPath, targetPdbPath, true);
+                                    File.Delete(standardPdbPath);
+                                    UnityEngine.Debug.Log($"  - Copied PDB: {Path.GetFileName(standardPdbPath)} -> {Path.GetFileName(targetPdbPath)}");
+                                }
+                                else if (File.Exists(nonStandardPdbPath))
+                                {
+                                    File.Copy(nonStandardPdbPath, targetPdbPath, true);
+                                    File.Delete(nonStandardPdbPath);
+                                    UnityEngine.Debug.Log($"  - Copied PDB: {Path.GetFileName(nonStandardPdbPath)} -> {Path.GetFileName(targetPdbPath)}");
+                                }
+                                
+                                // Clean up any residual .dll.pdb file at target location
+                                if (File.Exists(targetNonStandardPdbPath) && targetNonStandardPdbPath != targetPdbPath)
+                                {
+                                    File.Delete(targetNonStandardPdbPath);
+                                    UnityEngine.Debug.Log($"  - Cleaned up residual: {Path.GetFileName(targetNonStandardPdbPath)}");
+                                }
+                                
                                 // Success! Clean up the instrumented file
                                 File.Delete(instrumentedPath);
                                 
