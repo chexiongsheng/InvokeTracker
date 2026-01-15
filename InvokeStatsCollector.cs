@@ -150,15 +150,16 @@ namespace InvokeTracker.Unity
                         // Extract method name from field name
                         var methodName = field.Name.Substring(fieldPrefix.Length);
                         
-                        // Check if this is a helper type for generic class
+                        // Check if this is a helper type (all types now use helper types)
                         var typeName = type.FullName;
                         if (type.Name.EndsWith(helperTypeSuffix))
                         {
-                            // Remove the helper suffix to get sanitized generic type name
-                            // e.g., "StaticTranslate_1_InvokeCounters" -> "StaticTranslate_1"
+                            // Remove the helper suffix to get original type name
+                            // e.g., "Entry_InvokeCounters" -> "Entry"
+                            //       "StaticTranslate_1_InvokeCounters" -> "StaticTranslate_1"
                             var sanitizedName = type.Name.Substring(0, type.Name.Length - helperTypeSuffix.Length);
                             
-                            // Parse generic parameter count from sanitized name
+                            // Check if this is a generic type (contains underscore followed by number)
                             // e.g., "StaticTranslate_1" -> "StaticTranslate<T>"
                             //       "Action_2" -> "Action<T1,T2>"
                             var underscoreIndex = sanitizedName.LastIndexOf('_');
@@ -191,6 +192,19 @@ namespace InvokeTracker.Unity
                                 else
                                 {
                                     typeName = originalTypeName;
+                                }
+                            }
+                            else
+                            {
+                                // Non-generic type, just use the sanitized name
+                                // e.g., "Entry_InvokeCounters" -> "Entry"
+                                if (!string.IsNullOrEmpty(type.Namespace))
+                                {
+                                    typeName = type.Namespace + "." + sanitizedName;
+                                }
+                                else
+                                {
+                                    typeName = sanitizedName;
                                 }
                             }
                         }

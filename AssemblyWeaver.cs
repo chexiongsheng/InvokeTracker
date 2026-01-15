@@ -246,16 +246,8 @@ namespace InvokeTracker
                 // Generate field name for this method
                 var fieldName = GenerateFieldName(method);
 
-                // For generic types, use a helper type to store counters
-                TypeDefinition targetType;
-                if (type.HasGenericParameters)
-                {
-                    targetType = GetOrCreateHelperType(type);
-                }
-                else
-                {
-                    targetType = type;
-                }
+                // Use a helper type to store counters for all types
+                TypeDefinition targetType = GetOrCreateHelperType(type);
 
                 // Check if field already exists
                 var counterField = targetType.Fields.FirstOrDefault(f => f.Name == fieldName);
@@ -283,16 +275,17 @@ namespace InvokeTracker
             }
         }
 
-        private TypeDefinition GetOrCreateHelperType(TypeDefinition genericType)
+        private TypeDefinition GetOrCreateHelperType(TypeDefinition type)
         {
-            // Sanitize the generic type name: replace backtick with underscore
+            // Sanitize the type name: replace backtick with underscore for generic types
             // e.g., "StaticTranslate`1" -> "StaticTranslate_1"
             //       "Action`2" -> "Action_2"
+            // For non-generic types, the name remains unchanged
             // This preserves generic parameter count to avoid naming conflicts
-            var sanitizedName = genericType.Name.Replace('`', '_');
+            var sanitizedName = type.Name.Replace('`', '_');
             
             var helperTypeName = sanitizedName + HelperTypeSuffix;
-            var helperTypeFullName = genericType.Namespace + "." + helperTypeName;
+            var helperTypeFullName = type.Namespace + "." + helperTypeName;
 
             // Check if we already created this helper type
             if (_helperTypes.TryGetValue(helperTypeFullName, out var existingHelper))
@@ -301,7 +294,7 @@ namespace InvokeTracker
             }
 
             // Check if helper type already exists in the module
-            var existingType = genericType.Module.Types.FirstOrDefault(t => t.FullName == helperTypeFullName);
+            var existingType = type.Module.Types.FirstOrDefault(t => t.FullName == helperTypeFullName);
             if (existingType != null)
             {
                 _helperTypes[helperTypeFullName] = existingType;
@@ -310,17 +303,17 @@ namespace InvokeTracker
 
             // Create new helper type (non-generic, public but marked as compiler-generated)
             var helperType = new TypeDefinition(
-                genericType.Namespace,
+                type.Namespace,
                 helperTypeName,
                 TypeAttributes.Public | TypeAttributes.Class | TypeAttributes.Sealed | TypeAttributes.Abstract | TypeAttributes.BeforeFieldInit,
-                genericType.Module.TypeSystem.Object
+                type.Module.TypeSystem.Object
             );
 
             // Add the helper type to the module
-            genericType.Module.Types.Add(helperType);
+            type.Module.Types.Add(helperType);
             _helperTypes[helperTypeFullName] = helperType;
 
-            Console.WriteLine($"  → Created helper type: {helperTypeName} for generic type {genericType.Name}");
+            Console.WriteLine($"  → Created helper type: {helperTypeName} for type {type.Name}");
 
             return helperType;
         }
