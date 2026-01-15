@@ -14,6 +14,7 @@ namespace InvokeTracker
         private int _addedFieldCount = 0;
         private Dictionary<string, TypeDefinition> _helperTypes = new Dictionary<string, TypeDefinition>();
         private const string HelperTypeSuffix = "_InvokeCounters";
+        private CallerSideInstrumentationContext _callerSideContext = new CallerSideInstrumentationContext();
 
         public AssemblyWeaver(WeaverConfig config)
         {
@@ -77,9 +78,21 @@ namespace InvokeTracker
                 Console.WriteLine($"Detected original PDB: {originalPdbPath}");
             }
 
-            using var assembly = AssemblyDefinition.ReadAssembly(_config.AssemblyPath, readerParameters);
+            AssemblyDefinition assembly;
+            try
+            {
+                assembly = AssemblyDefinition.ReadAssembly(_config.AssemblyPath, readerParameters);
+            }
+            catch (Exception ex) when (ex.Message.Contains("Symbols were found but are not matching"))
+            {
+                Console.WriteLine($"Warning: PDB symbols don't match assembly, loading without symbols...");
+                readerParameters.ReadSymbols = false;
+                assembly = AssemblyDefinition.ReadAssembly(_config.AssemblyPath, readerParameters);
+            }
 
-            Console.WriteLine($"Processing assembly: {assembly.Name.Name}");
+            using (assembly)
+            {
+                Console.WriteLine($"Processing assembly: {assembly.Name.Name}");
 
             // Check if assembly is already instrumented
             bool alreadyInstrumented = false;
@@ -111,6 +124,27 @@ namespace InvokeTracker
             // Process all types (collect first to avoid collection modification during enumeration)
             foreach (var module in assembly.Modules)
             {
+                // First pass: Identify methods that need caller-side instrumentation
+                Console.WriteLine("\n=== First Pass: Identifying methods for caller-side instrumentation ===");
+                var typesToScan = module.Types.ToList();
+                foreach (var type in typesToScan)
+                {
+                    IdentifyCallerSideInstrumentationMethods(type);
+                }
+
+                // First pass: Scan all call sites
+                Console.WriteLine("\n=== First Pass: Scanning call sites ===");
+                foreach (var type in typesToScan)
+                {
+                    ScanMethodCallSites(type);
+                }
+
+                Console.WriteLine($"\n=== Summary ===");
+                Console.WriteLine($"  - Methods needing caller-side instrumentation: {_callerSideContext.MethodsNeedingInstrumentation.Count}");
+                Console.WriteLine($"  - Total call sites found: {_callerSideContext.CallSites.Values.Sum(list => list.Count)}");
+
+                // Second pass: Process types and instrument methods
+                Console.WriteLine("\n=== Second Pass: Instrumenting methods ===");
                 // ToList() creates a snapshot to avoid "Collection was modified" exception
                 // when we add helper types during processing
                 var typesToProcess = module.Types.ToList();
@@ -118,6 +152,10 @@ namespace InvokeTracker
                 {
                     ProcessType(type);
                 }
+
+                // Second pass: Instrument call sites
+                Console.WriteLine("\n=== Second Pass: Instrumenting call sites ===");
+                InstrumentCallSites();
             }
 
             // Save the modified assembly
@@ -154,6 +192,7 @@ namespace InvokeTracker
                     RenameGeneratedPdb(_config.AssemblyPath, originalPdbPath);
                 }
             }
+            } // end using (assembly)
         }
 
         private void ProcessType(TypeDefinition type)
@@ -482,6 +521,203 @@ namespace InvokeTracker
                 File.Move(cecilGeneratedPdb, targetPdbPath);
                 Console.WriteLine($"  - Renamed PDB: {Path.GetFileName(cecilGeneratedPdb)} -> {Path.GetFileName(targetPdbPath)}");
             }
+        }
+
+        /// <summary>
+        /// Identify methods that need caller-side instrumentation
+        /// (abstract methods, interface methods, extern methods, etc.)
+        /// </summary>
+        private void IdentifyCallerSideInstrumentationMethods(TypeDefinition type)
+        {
+            // Skip compiler-generated types unless configured
+            if (!_config.InstrumentCompilerGenerated && IsCompilerGenerated(type))
+            {
+                return;
+            }
+
+            // Check namespace filters
+            if (!ShouldProcessType(type))
+            {
+                return;
+            }
+
+            // Process nested types recursively
+            foreach (var nestedType in type.NestedTypes)
+            {
+                IdentifyCallerSideInstrumentationMethods(nestedType);
+            }
+
+            // Find methods that need caller-side instrumentation
+            foreach (var method in type.Methods)
+            {
+                // Skip compiler-generated unless configured
+                if (!_config.InstrumentCompilerGenerated && IsCompilerGenerated(method))
+                    continue;
+
+                // Check if method needs caller-side instrumentation
+                bool needsCallerSide = false;
+                string reason = "";
+
+                if (method.IsAbstract)
+                {
+                    needsCallerSide = true;
+                    reason = "abstract method";
+                }
+                else if (!method.HasBody)
+                {
+                    needsCallerSide = true;
+                    if (type.IsInterface)
+                        reason = "interface method";
+                    else if (method.IsPInvokeImpl)
+                        reason = "extern/P/Invoke method";
+                    else
+                        reason = "method without body";
+                }
+
+                if (needsCallerSide)
+                {
+                    // Create helper type and counter field for this method
+                    var helperType = GetOrCreateHelperType(type);
+                    var fieldName = GenerateFieldName(method);
+                    
+                    var counterField = helperType.Fields.FirstOrDefault(f => f.Name == fieldName);
+                    if (counterField == null)
+                    {
+                        counterField = new FieldDefinition(
+                            fieldName,
+                            FieldAttributes.Public | FieldAttributes.Static,
+                            method.Module.TypeSystem.UInt32
+                        );
+                        helperType.Fields.Add(counterField);
+                        _addedFieldCount++;
+                    }
+
+                    // Add to context
+                    _callerSideContext.AddMethod(method, helperType, counterField);
+                    
+                    Console.WriteLine($"  ✓ Identified: {type.FullName}::{method.Name} ({reason})");
+                }
+            }
+        }
+
+        /// <summary>
+        /// Scan all method bodies to find call sites that need instrumentation
+        /// </summary>
+        private void ScanMethodCallSites(TypeDefinition type)
+        {
+            // Skip compiler-generated types unless configured
+            if (!_config.InstrumentCompilerGenerated && IsCompilerGenerated(type))
+            {
+                return;
+            }
+
+            // Process nested types recursively
+            foreach (var nestedType in type.NestedTypes)
+            {
+                ScanMethodCallSites(nestedType);
+            }
+
+            // Scan all methods with bodies
+            foreach (var method in type.Methods)
+            {
+                if (!method.HasBody)
+                    continue;
+
+                // Skip compiler-generated unless configured
+                if (!_config.InstrumentCompilerGenerated && IsCompilerGenerated(method))
+                    continue;
+
+                // Scan IL instructions for Call and Callvirt
+                foreach (var instruction in method.Body.Instructions)
+                {
+                    if (instruction.OpCode == OpCodes.Call || instruction.OpCode == OpCodes.Callvirt)
+                    {
+                        var callee = instruction.Operand as MethodReference;
+                        if (callee != null && _callerSideContext.NeedsCallerSideInstrumentation(callee))
+                        {
+                            _callerSideContext.AddCallSite(method, instruction, callee);
+                            Console.WriteLine($"  → Found call site: {method.FullName} calls {callee.FullName}");
+                        }
+                    }
+                }
+            }
+        }
+
+        /// <summary>
+        /// Instrument all identified call sites
+        /// </summary>
+        private void InstrumentCallSites()
+        {
+            int instrumentedCallSites = 0;
+
+            foreach (var kvp in _callerSideContext.CallSites)
+            {
+                var methodSignature = kvp.Key;
+                var callSites = kvp.Value;
+
+                var methodInfo = _callerSideContext.GetMethodInfo(callSites[0].Callee);
+                if (methodInfo == null)
+                {
+                    Console.WriteLine($"  ✗ Warning: Method info not found for {methodSignature}");
+                    continue;
+                }
+
+                foreach (var callSite in callSites)
+                {
+                    try
+                    {
+                        InstrumentCallSite(callSite, methodInfo);
+                        instrumentedCallSites++;
+                        Console.WriteLine($"  ✓ Instrumented call site in {callSite.Caller.FullName}");
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"  ✗ Failed to instrument call site in {callSite.Caller.FullName}: {ex.Message}");
+                    }
+                }
+            }
+
+            Console.WriteLine($"\n  - Total call sites instrumented: {instrumentedCallSites}");
+        }
+
+        /// <summary>
+        /// Instrument a single call site by inserting counter increment before the call
+        /// </summary>
+        private void InstrumentCallSite(CallerSideInstrumentationContext.CallSite callSite, CallerSideInstrumentationContext.MethodInfo methodInfo)
+        {
+            var caller = callSite.Caller;
+            var callInstruction = callSite.CallInstruction;
+            var counterField = methodInfo.CounterField;
+
+            var il = caller.Body.GetILProcessor();
+
+            // Import the counter field reference if it's from another assembly
+            FieldReference fieldRef;
+            if (counterField.DeclaringType.Module != caller.Module)
+            {
+                // Cross-assembly reference - need to import
+                var importedType = caller.Module.ImportReference(counterField.DeclaringType);
+                fieldRef = new FieldReference(counterField.Name, counterField.FieldType, importedType);
+            }
+            else
+            {
+                fieldRef = GetFieldRef(counterField);
+            }
+
+            // Create instructions to increment counter
+            var loadField = il.Create(OpCodes.Ldsfld, fieldRef);
+            var loadOne = il.Create(OpCodes.Ldc_I4_1);
+            var add = il.Create(OpCodes.Add);
+            var storeField = il.Create(OpCodes.Stsfld, fieldRef);
+
+            // Insert before the call instruction
+            il.InsertBefore(callInstruction, loadField);
+            il.InsertAfter(loadField, loadOne);
+            il.InsertAfter(loadOne, add);
+            il.InsertAfter(add, storeField);
+
+            // Update offsets and exception handlers
+            caller.Body.OptimizeMacros();
         }
     }
 }
